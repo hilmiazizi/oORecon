@@ -152,7 +152,7 @@ models.py               Shared result models
 utils.py                Domain normalize, curl_cffi thread sessions
 tools/                  One module per recon tool (dnsinfo, certsub, ports, …)
 requirements.txt        Python dependencies
-assets/                 Banner (oorecon.png) and demo GIF
+assets/                 Banner, demo GIF, and banner.ans
 ```
 
 ## FAQ

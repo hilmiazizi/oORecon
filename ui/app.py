@@ -37,7 +37,7 @@ from ui.styles import APP_CSS
 from ui.workspace import DomainWorkspace, PortDetail
 from utils import normalize_domain
 
-BANNER = Text.from_ansi(Path(__file__).resolve().parents[1].joinpath("banner.ans").read_text(encoding="utf-8"))
+BANNER = Text.from_ansi(Path(__file__).resolve().parents[1].joinpath("assets", "banner.ans").read_text(encoding="utf-8"))
 LOG_MAX_LINES = 800
 MISC_LOG_INTERVAL = 0.08
 
