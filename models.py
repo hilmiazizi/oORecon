@@ -59,6 +59,8 @@ class JsHit:
 class ReverseIpHit:
 	ip: str
 	host: str
+	status: str | None = None
+	cloudflare: bool = False
 
 
 @dataclass(frozen=True)

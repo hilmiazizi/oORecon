@@ -13,7 +13,7 @@ from detect_secrets import SecretsCollection
 from detect_secrets.settings import default_settings, get_settings, transient_settings
 
 from models import JsHit
-from utils import call_maybe, cffi_close_thread_sessions, cffi_thread_session, http_base
+from utils import call_maybe, cffi_get, http_base
 
 HEADERS = {
 	"User-Agent": "Mozilla/5.0 (compatible; oORecon/1.0)",
@@ -174,11 +174,7 @@ def _extract_urls(text: str) -> list[str]:
 def _get_sync(url: str, timeout: float = 25.0) -> str:
 	"""Blocking GET — runs in a worker thread."""
 	try:
-		response = cffi_thread_session(HEADERS).get(
-			url,
-			allow_redirects=True,
-			timeout=timeout,
-		)
+		response = cffi_get(url, headers=HEADERS, timeout=timeout)
 		if response.status_code >= 400:
 			return ""
 		text = response.text or ""
@@ -234,61 +230,55 @@ async def mine_js(
 		async def fetch(url: str) -> str:
 			return await loop.run_in_executor(pool, _get_sync, url)
 
-		try:
-			for index, base in enumerate(ordered, 1):
+		for index, base in enumerate(ordered, 1):
+			await call_maybe(
+				on_progress,
+				"page " + str(index) + "/" + str(len(ordered)) + " · " + base,
+			)
+			html = await fetch(base)
+			if not html:
+				continue
+
+			parser = _ScriptParser()
+			try:
+				parser.feed(html)
+			except Exception:
+				continue
+
+			script_urls = []
+			for src in parser.scripts:
+				resolved = _resolve(base, src)
+				if resolved:
+					script_urls.append(resolved)
+					await emit("script", resolved, base)
+
+			bodies: list[tuple[str, str]] = [("inline", "\n".join(parser.inline))]
+			if script_urls:
 				await call_maybe(
 					on_progress,
-					"page " + str(index) + "/" + str(len(ordered)) + " · " + base,
+					"js 0/" + str(len(script_urls)) + " · " + base,
 				)
-				html = await fetch(base)
-				if not html:
-					continue
+				fetched = await asyncio.gather(*(fetch(url) for url in script_urls))
+				for script_url, body in zip(script_urls, fetched):
+					bodies.append((script_url, body))
 
-				parser = _ScriptParser()
-				try:
-					parser.feed(html)
-				except Exception:
-					continue
-
-				script_urls = []
-				for src in parser.scripts:
-					resolved = _resolve(base, src)
-					if resolved:
-						script_urls.append(resolved)
-						await emit("script", resolved, base)
-
-				bodies: list[tuple[str, str]] = [("inline", "\n".join(parser.inline))]
-				if script_urls:
-					await call_maybe(
-						on_progress,
-						"js 0/" + str(len(script_urls)) + " · " + base,
-					)
-					fetched = await asyncio.gather(*(fetch(url) for url in script_urls))
-					for script_url, body in zip(script_urls, fetched):
-						bodies.append((script_url, body))
-
-				for source, body in bodies:
-					src_label = source if source != "inline" else base
-					for raw in _extract_urls(body):
-						resolved = _resolve(source if source.startswith("http") else base, raw)
-						if not resolved:
+			for source, body in bodies:
+				src_label = source if source != "inline" else base
+				for raw in _extract_urls(body):
+					resolved = _resolve(source if source.startswith("http") else base, raw)
+					if not resolved:
+						continue
+					host_name = urlparse(resolved).hostname or ""
+					if host_name and root not in host_name and not resolved.startswith("/"):
+						if not resolved.endswith(".js"):
 							continue
-						host_name = urlparse(resolved).hostname or ""
-						if host_name and root not in host_name and not resolved.startswith("/"):
-							if not resolved.endswith(".js"):
-								continue
-						kind = "endpoint" if urlparse(resolved).path else "url"
-						if resolved.endswith(".js"):
-							kind = "script"
-						await emit(kind, resolved, src_label)
-					for name, value, context in await asyncio.to_thread(_extract_secrets, body):
-						await emit(name, value, src_label, context)
-				await asyncio.sleep(0)
-		finally:
-			closes = [
-				loop.run_in_executor(pool, cffi_close_thread_sessions) for _ in range(workers)
-			]
-			await asyncio.gather(*closes, return_exceptions=True)
+					kind = "endpoint" if urlparse(resolved).path else "url"
+					if resolved.endswith(".js"):
+						kind = "script"
+					await emit(kind, resolved, src_label)
+				for name, value, context in await asyncio.to_thread(_extract_secrets, body):
+					await emit(name, value, src_label, context)
+		await asyncio.sleep(0)
 
 	await call_maybe(on_progress, "done · " + str(len(hits)) + " findings")
 	return hits

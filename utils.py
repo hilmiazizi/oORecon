@@ -4,18 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import threading
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from curl_cffi.requests import Session
-
 # Browser TLS fingerprint for requests to discovered targets (not third-party APIs).
 CFFI_IMPERSONATE = "chrome"
-
-# curl_cffi's bundled libcurl has no AsynchDNS — never use AsyncSession on the
-# asyncio/TUI thread. Prefer sync Session via these helpers + ThreadPoolExecutor.
-_thread_local = threading.local()
 
 
 def normalize_domain(raw: str) -> str:
@@ -78,34 +71,39 @@ def is_cloudflare(headers) -> bool:
 	return False
 
 
-def cffi_thread_session(headers: Mapping[str, str] | None = None) -> Session:
-	"""Per-thread curl_cffi Session (safe for blocking DNS/TLS off the UI loop)."""
-	bucket = getattr(_thread_local, "cffi_sessions", None)
-	if bucket is None:
-		bucket = {}
-		_thread_local.cffi_sessions = bucket
-	key = tuple(sorted((headers or {}).items()))
-	session = bucket.get(key)
-	if session is None:
-		kwargs: dict = {"impersonate": CFFI_IMPERSONATE}
-		if headers:
-			kwargs["headers"] = dict(headers)
-		session = Session(**kwargs)
-		bucket[key] = session
-	return session
+def cffi_get(
+	url: str,
+	*,
+	headers: Mapping[str, str] | None = None,
+	timeout: float = 10.0,
+	allow_redirects: bool = True,
+	max_redirects: int = 5,
+):
+	"""One-shot curl_cffi GET. Nothing is reused."""
+	from curl_cffi.requests import get
+
+	return get(
+		url,
+		impersonate=CFFI_IMPERSONATE,
+		headers=dict(headers) if headers else None,
+		timeout=timeout,
+		allow_redirects=allow_redirects,
+		max_redirects=max_redirects,
+	)
 
 
-def cffi_close_thread_sessions() -> None:
-	"""Close curl sessions bound to the current worker thread."""
-	bucket = getattr(_thread_local, "cffi_sessions", None)
-	if not bucket:
-		return
-	for session in bucket.values():
-		try:
-			session.close()
-		except Exception:
-			pass
-	_thread_local.cffi_sessions = {}
+def probe_https(host: str, timeout: float = 2.0) -> tuple[str | None, str | None, bool]:
+	"""One-shot HTTPS GET for status, connected IP, and Cloudflare."""
+	try:
+		response = cffi_get("https://" + host, timeout=timeout)
+		status = str(response.status_code)
+		ip = (getattr(response, "primary_ip", None) or "").strip() or None
+		return status, ip, is_cloudflare(response.headers)
+	except Exception as exc:
+		name = type(exc).__name__.lower()
+		if "timeout" in name or "timed out" in str(exc).lower():
+			return None, None, False
+		return None, None, False
 
 
 async def call_maybe(callback, *args) -> None:

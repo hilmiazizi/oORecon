@@ -77,7 +77,7 @@ Runs a broad port pass on the domain you entered (not every subdomain) and lists
 
 #### Reverse IP lookup
 
-Takes only the apex DNS **A** and **AAAA** addresses and looks up related certificate hostnames. Does not fan out to every subdomain IP.
+Takes only the apex DNS **A** and **AAAA** addresses and looks up related certificate hostnames, then checks each one over HTTPS for status and Cloudflare. Does not fan out to every subdomain IP.
 
 #### Leaked Login URL
 

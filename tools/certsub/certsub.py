@@ -5,13 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import aiohttp
 
 from models import HostResult
-from utils import (
-	call_maybe,
-	cffi_close_thread_sessions,
-	cffi_thread_session,
-	is_cloudflare,
-	normalize_domain,
-)
+from utils import call_maybe, normalize_domain, probe_https
 
 HEADERS = {
 	"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -75,26 +69,8 @@ def _check_sync(host: str, timeout: float) -> tuple[str | None, bool, str | None
 
 	Returns (status, cloudflare, primary_ip).
 	"""
-	url = "https://" + host
-	try:
-		with cffi_thread_session().stream(
-			"GET",
-			url,
-			timeout=timeout,
-			allow_redirects=True,
-			max_redirects=5,
-		) as response:
-			status = str(response.status_code)
-			cloudflare = is_cloudflare(response.headers)
-			ip = (getattr(response, "primary_ip", None) or "").strip() or None
-			return status, cloudflare, ip
-	except TimeoutError:
-		return None, False, None
-	except Exception as exc:
-		name = type(exc).__name__.lower()
-		if "timeout" in name or "timed out" in str(exc).lower():
-			return None, False, None
-		return None, False, None
+	status, ip, cloudflare = probe_https(host, timeout)
+	return status, cloudflare, ip
 
 
 async def certsub(
@@ -167,12 +143,6 @@ async def certsub(
 				await call_maybe(on_result, result, current, total)
 				await asyncio.sleep(0)
 
-		try:
-			await asyncio.gather(*(worker() for _ in range(workers)))
-		finally:
-			closes = [
-				loop.run_in_executor(pool, cffi_close_thread_sessions) for _ in range(workers)
-			]
-			await asyncio.gather(*closes, return_exceptions=True)
+		await asyncio.gather(*(worker() for _ in range(workers)))
 
 	return sorted(results, key=lambda item: item.host)

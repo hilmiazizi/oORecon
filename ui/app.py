@@ -65,6 +65,7 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		super().__init__()
 		self.initial_domain = domain
 		self.results: list[HostResult] = []
+		self._status_counts = {"2": 0, "3": 0, "4": 0, "5": 0, "down": 0}
 		self.total = 0
 		self.bucket = "all"
 		self.host_query = ""
@@ -155,8 +156,10 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		self.query_one("#progress-ports", ProgressBar).update(total=len(COMMON_PORTS), progress=0)
 
 		reverse = self.query_one("#table-reverse", DataTable)
-		reverse.add_column("IP", width=18)
-		reverse.add_column("Host")
+		reverse.add_column("Status", key="status", width=8)
+		reverse.add_column("Host", key="host")
+		reverse.add_column("IP", key="ip", width=18)
+		reverse.add_column("Cloudflare", key="cf", width=10)
 		reverse.cursor_type = "row"
 		reverse.zebra_stripes = True
 

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from models import DirHit
-from utils import call_maybe, cffi_close_thread_sessions, cffi_thread_session, http_base
+from utils import call_maybe, cffi_get, http_base
 
 HEADERS = {
 	"User-Agent": "Mozilla/5.0 (compatible; oORecon/1.0)",
@@ -56,11 +56,7 @@ DEFAULT_PATHS = load_wordlist()
 def _probe_sync(url: str, timeout: float) -> tuple[int | None, int]:
 	"""Blocking GET — runs in a worker thread (no AsyncSession on the UI loop)."""
 	try:
-		response = cffi_thread_session(HEADERS).get(
-			url,
-			allow_redirects=False,
-			timeout=timeout,
-		)
+		response = cffi_get(url, headers=HEADERS, allow_redirects=False, timeout=timeout)
 		cl = response.headers.get("Content-Length") or response.headers.get("content-length")
 		if cl is not None and str(cl).isdigit():
 			length = int(cl)
@@ -120,12 +116,6 @@ async def brute_dirs(
 				await call_maybe(on_progress, str(current) + "/" + str(total))
 				await asyncio.sleep(0)
 
-		try:
-			await asyncio.gather(*(worker() for _ in range(workers)))
-		finally:
-			closes = [
-				loop.run_in_executor(pool, cffi_close_thread_sessions) for _ in range(workers)
-			]
-			await asyncio.gather(*closes, return_exceptions=True)
+		await asyncio.gather(*(worker() for _ in range(workers)))
 
 	return sorted(hits, key=lambda item: (item.status, item.path))
