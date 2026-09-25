@@ -323,7 +323,7 @@ class DomainWorkspace(Screen):
 			with TabbedContent(initial="sitemap", id="ws-menu"):
 				with TabPane("Sitemap", id="sitemap"):
 					with Horizontal(classes="tool-bar"):
-						yield Static("robots.txt + sitemap discovery", classes="tool-hint")
+						yield Static("robots.txt + sitemap wordlist", classes="tool-hint")
 						yield Button("Run", id="run-sitemap", classes="tool-run", variant="primary")
 					yield Static("Press Run", id="stats-sitemap", classes="tool-stats")
 					yield DataTable(id="table-sitemap", classes="tool-table")
@@ -567,7 +567,7 @@ class DomainWorkspace(Screen):
 		table.clear()
 		self._sitemap_hits.clear()
 		self._set_stats("sitemap", "fetching sitemap")
-		self._log("sitemap · fetching robots.txt / sitemaps...")
+		self._log("sitemap · robots.txt + wordlist...")
 
 		def on_progress(text: str) -> None:
 			self._set_stats("sitemap", text)

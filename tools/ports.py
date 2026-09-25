@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 from collections.abc import Awaitable, Callable
 
 from models import PortHit
@@ -46,8 +47,51 @@ PORT_SERVICES = {
 
 # Shodan-style port set (~3800 ports), not a tiny top-N list.
 COMMON_PORTS = SHODAN_PORTS
-HTTP_PROBE_PORTS = {80, 81, 8000, 8008, 8080, 8081, 8888, 3000, 5000, 7001, 9000, 9080, 9443}
+
+
+def _http_probe(host: str) -> bytes:
+	"""GET so the banner includes a body (Elasticsearch puts its version there)."""
+	try:
+		host_bytes = host.encode("idna")
+	except UnicodeError:
+		host_bytes = host.encode("ascii", "ignore")
+	return b"GET / HTTP/1.0\r\nHost: " + host_bytes + b"\r\n\r\n"
+
+
+def _tls_label(writer: asyncio.StreamWriter) -> str:
+	obj = writer.get_extra_info("ssl_object")
+	if obj is None:
+		return ""
+	version = obj.version() or "TLS"
+	cipher = obj.cipher()
+	name = cipher[0] if cipher else ""
+	return (version + " " + name).strip()
+
+
+async def _open(host: str, port: int, timeout: float):
+	"""TLS ports handshake first. A failed handshake falls back to plaintext."""
+	if port in TLS_PORTS:
+		try:
+			return await asyncio.wait_for(
+				asyncio.open_connection(
+					host,
+					port,
+					ssl=_SSL,
+					server_hostname=host,
+				),
+				timeout=timeout,
+			)
+		except (ssl.SSLError, asyncio.TimeoutError, OSError, ConnectionError):
+			pass
+	return await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+# Plaintext HTTP. 9200 is Elasticsearch's HTTP API, not a binary port.
+HTTP_PROBE_PORTS = {
+	80, 81, 3000, 5000, 7001, 8000, 8008, 8080, 8081, 8888, 9000, 9080, 9200,
+}
 TLS_PORTS = {443, 8443, 9443, 10443, 11443, 12443, 60443}
+_SSL = ssl.create_default_context()
+_SSL.check_hostname = False
+_SSL.verify_mode = ssl.CERT_NONE
 
 
 async def scan_ports(
@@ -74,30 +118,25 @@ async def scan_ports(
 		try:
 			async with sem:
 				await call_maybe(on_probe, port)
-				reader, writer = await asyncio.wait_for(
-					asyncio.open_connection(host, port),
-					timeout=timeout,
-				)
+				reader, writer = await _open(host, port, timeout)
 			try:
-				if port in HTTP_PROBE_PORTS:
-					try:
-						host_bytes = host.encode("idna")
-					except UnicodeError:
-						host_bytes = host.encode("ascii", "ignore")
-					writer.write(b"HEAD / HTTP/1.0\r\nHost: " + host_bytes + b"\r\n\r\n")
-					await writer.drain()
-				elif port in TLS_PORTS:
+				if port in TLS_PORTS:
 					service = service or "https"
+				if port in HTTP_PROBE_PORTS or port in TLS_PORTS:
+					writer.write(_http_probe(host))
 				else:
 					writer.write(b"\r\n")
-					await writer.drain()
+				await writer.drain()
 				try:
-					data = await asyncio.wait_for(reader.read(512), timeout=timeout)
+					data = await asyncio.wait_for(reader.read(1024), timeout=timeout)
 					raw = data.decode("utf-8", "replace")
 					banner = " ".join(raw.replace("\r", "\n").split())
-				except (asyncio.TimeoutError, ConnectionError):
+				except (asyncio.TimeoutError, ConnectionError, ssl.SSLError):
 					raw = ""
 					banner = ""
+				if not banner and port in TLS_PORTS:
+					banner = _tls_label(writer)
+					raw = banner
 			finally:
 				writer.close()
 				try:

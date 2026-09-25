@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import re
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
 
@@ -19,6 +21,31 @@ OnProgress = Callable[[str], Awaitable[None] | None]
 OnItem = Callable[[object], Awaitable[None] | None]
 
 DEFAULT_CONCURRENCY = 15
+
+WORDLIST_PATH = Path(__file__).resolve().parent / "wordlists" / "sitemap.txt"
+
+# Used when the wordlist file is missing.
+FALLBACK_PATHS = (
+	"sitemap.xml",
+	"sitemap_index.xml",
+	"sitemap-index.xml",
+)
+
+
+def load_sitemap_wordlist(path: Path | None = None) -> tuple[str, ...]:
+	"""One sitemap path per line. Comments and blanks are skipped."""
+	target = path or WORDLIST_PATH
+	if not target.is_file():
+		return FALLBACK_PATHS
+	paths: list[str] = []
+	seen: set[str] = set()
+	for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
+		item = line.strip().lstrip("/")
+		if not item or item.startswith("#") or item in seen:
+			continue
+		seen.add(item)
+		paths.append(item)
+	return tuple(paths) if paths else FALLBACK_PATHS
 
 
 def _is_xml_sitemap(url: str) -> bool:
@@ -47,9 +74,15 @@ def _get_sync(url: str, timeout: float = 25.0) -> tuple[int | None, str]:
 	"""Blocking GET — runs in a worker thread."""
 	try:
 		response = cffi_get(url, headers=HEADERS, timeout=timeout)
+		body = response.content or b""
 		text = response.text or ""
 		if isinstance(text, bytes):
 			text = text.decode("utf-8", errors="replace")
+		if url.lower().split("?", 1)[0].endswith(".gz") or body.startswith(b"\x1f\x8b"):
+			try:
+				text = gzip.decompress(body).decode("utf-8", errors="replace")
+			except Exception:
+				pass
 		return response.status_code, text
 	except Exception:
 		return None, ""
@@ -58,13 +91,14 @@ def _get_sync(url: str, timeout: float = 25.0) -> tuple[int | None, str]:
 async def find_sitemaps(
 	host: str,
 	*,
+	wordlist: Path | None = None,
 	on_progress: OnProgress | None = None,
 	on_hit: OnItem | None = None,
 ) -> list[SitemapHit]:
-	"""Recursively discover sitemap .xml URLs.
+	"""Recursively discover sitemap URLs.
 
-	Fetches and parses sitemap content. Only .xml / .xml.gz URLs are shown;
-	page <loc> entries inside urlsets are ignored.
+	Seeds come from robots.txt and the sitemap wordlist. Nested <loc> entries
+	that point at another sitemap are followed. Page URLs inside a urlset are ignored.
 	"""
 	base = http_base(host)
 	hits: list[SitemapHit] = []
@@ -90,12 +124,14 @@ async def find_sitemaps(
 		else:
 			await call_maybe(on_progress, "robots.txt missing")
 
-		for guess in ("/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml"):
-			seeds.append(urljoin(base + "/", guess.lstrip("/")))
+		paths = load_sitemap_wordlist(wordlist)
+		await call_maybe(on_progress, "wordlist · " + str(len(paths)) + " paths")
+		for path in paths:
+			seeds.append(urljoin(base + "/", path))
 
 		queue: list[str] = []
 		for url in seeds:
-			if url and _is_xml_sitemap(url) and url not in seen:
+			if url and url not in seen:
 				seen.add(url)
 				queue.append(url)
 
@@ -115,7 +151,6 @@ async def find_sitemaps(
 			await call_maybe(on_progress, "checking " + url)
 			async with sem:
 				status, body = await fetch(url)
-			# Only display confirmed HTTP 200 sitemap XML URLs.
 			if status != 200 or not body:
 				return []
 			await emit(url, "200")
