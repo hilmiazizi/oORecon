@@ -85,6 +85,8 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		self.host_cache = HostCache()
 		self._dns_ips: list[str] = []
 		self._reverse_hits: list[ReverseIpHit] = []
+		self._rev_bucket = "all"
+		self._rev_checked: set[str] = set()
 		self._rev_status = ""
 		self._leaked_hits: list[LeakedUrlHit] = []
 		self._leak_status = ""
@@ -130,6 +132,13 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 						yield DataTable(id="table-ports")
 					with TabPane("Reverse IP", id="reverse"):
 						yield Static("Hurricane Electric reverse IP / cert hostnames", id="stats-reverse")
+						with Horizontal(id="rev-filters"):
+							yield Button("All", id="rf-all")
+							yield Button("2xx", id="rf-2")
+							yield Button("3xx", id="rf-3")
+							yield Button("4xx", id="rf-4")
+							yield Button("5xx", id="rf-5")
+							yield Button("Down", id="rf-down")
 						yield DataTable(id="table-reverse")
 					with TabPane("Leaked Login URL", id="leaked"):
 						yield Static("Hudson Rock leaked login / credential URLs", id="stats-leaked")
@@ -173,6 +182,7 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		leaked.zebra_stripes = True
 
 		self._set_bucket("all")
+		self._set_rev_bucket("all")
 		self._show_home()
 		if self.initial_domain:
 			self.query_one("#domain", Input).value = self.initial_domain
@@ -184,6 +194,8 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 			self._lookup()
 		elif button_id == "back":
 			self._show_home()
+		elif button_id.startswith("rf-"):
+			self._set_rev_bucket(button_id[3:])
 		elif button_id.startswith("f-"):
 			self._set_bucket(button_id[2:])
 
@@ -217,9 +229,11 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 	def action_bucket(self, bucket: str) -> None:
 		if self.query_one("#home").display:
 			return
-		if self.query_one(TabbedContent).active != "subdomain":
-			return
-		self._set_bucket(bucket)
+		active = self.query_one(TabbedContent).active
+		if active == "subdomain":
+			self._set_bucket(bucket)
+		elif active == "reverse":
+			self._set_rev_bucket(bucket)
 
 	def action_focus_filter(self) -> None:
 		if self.query_one("#home").display:
@@ -350,6 +364,8 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		self._leak_status = "leaked…"
 		self._dns_ips = []
 		self._reverse_hits = []
+		self._rev_checked = set()
+		self._set_rev_bucket("all")
 		self._leaked_hits = []
 		self._dns_done = asyncio.Event()
 		self._sub_done = asyncio.Event()

@@ -137,11 +137,11 @@ TabPane {
 	height: 1;
 	margin: 0 1;
 }
-#filters {
+#filters, #rev-filters {
 	height: 3;
 	padding: 0 1;
 }
-#filters Button {
+#filters Button, #rev-filters Button {
 	margin-right: 1;
 	min-width: 8;
 }

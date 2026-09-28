@@ -4,7 +4,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from rich.text import Text
-from textual.widgets import DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 from models import ReverseIpHit
 from tools.reverseip import ReverseIpError, reverse_ip_lookup
@@ -50,13 +50,7 @@ class ReversePhase:
 			if not self.is_running:
 				return
 			self._reverse_hits.append(hit)
-			table.add_row(
-				Text("…", style="dim"),
-				hit.host,
-				hit.ip,
-				Text("…", style="dim"),
-				key=hit.host,
-			)
+			self._sync_rev_row(hit)
 			self._log_throttled("reverse · " + hit.ip + " · " + hit.host)
 
 		try:
@@ -123,7 +117,6 @@ class ReversePhase:
 		done = 0
 		lock = asyncio.Lock()
 		loop = asyncio.get_running_loop()
-		table = self.query_one("#table-reverse", DataTable)
 		self._log("reverse · checking " + str(total) + " hosts...")
 
 		with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="reverse") as pool:
@@ -144,9 +137,13 @@ class ReversePhase:
 						checked.append(updated)
 						done += 1
 						current = done
+						for index, item in enumerate(self._reverse_hits):
+							if item.host == hit.host:
+								self._reverse_hits[index] = updated
+								break
+						self._rev_checked.add(hit.host)
 					if self.is_running:
-						table.update_cell(hit.host, "status", status_text(updated))
-						table.update_cell(hit.host, "cf", cloudflare_text(updated))
+						self._sync_rev_row(updated)
 						self._rev_status = "reverse " + str(current) + "/" + str(total)
 						if current == total or current % 10 == 0:
 							self._refresh_status()
@@ -168,3 +165,49 @@ class ReversePhase:
 		order = {hit.host: index for index, hit in enumerate(hits)}
 		checked.sort(key=lambda item: order.get(item.host, 0))
 		return checked
+
+	def _set_rev_bucket(self, bucket: str) -> None:
+		self._rev_bucket = bucket
+		for name in ("all", "2", "3", "4", "5", "down"):
+			button = self.query_one("#rf-" + name, Button)
+			button.variant = "primary" if name == bucket else "default"
+		self._rebuild_reverse_table()
+
+	def _rev_match(self, hit: ReverseIpHit) -> bool:
+		bucket = self._rev_bucket
+		pending = hit.host not in self._rev_checked
+		if bucket == "all":
+			return True
+		if pending:
+			return False
+		if bucket == "down":
+			return not hit.status
+		return bool(hit.status) and hit.status.startswith(bucket)
+
+	def _sync_rev_row(self, hit: ReverseIpHit) -> None:
+		table = self.query_one("#table-reverse", DataTable)
+		show = self._rev_match(hit)
+		present = hit.host in table.rows
+		if not show:
+			if present:
+				table.remove_row(hit.host)
+			return
+		pending = hit.host not in self._rev_checked
+		if pending:
+			status = Text("…", style="dim")
+			cf = Text("…", style="dim")
+		else:
+			status = status_text(hit)
+			cf = cloudflare_text(hit)
+		if present:
+			table.update_cell(hit.host, "status", status)
+			table.update_cell(hit.host, "cf", cf)
+			return
+		table.add_row(status, hit.host, hit.ip, cf, key=hit.host)
+
+	def _rebuild_reverse_table(self) -> None:
+		table = self.query_one("#table-reverse", DataTable)
+		table.clear()
+		for hit in self._reverse_hits:
+			if self._rev_match(hit):
+				self._sync_rev_row(hit)
