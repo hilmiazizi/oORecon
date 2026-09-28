@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import ssl
 from collections.abc import Awaitable, Callable
 
 from models import PortHit
-from utils import call_maybe
+from utils import call_maybe, is_ip
 
 from .shodan_ports import SHODAN_PORTS
 
@@ -47,6 +48,32 @@ PORT_SERVICES = {
 
 # Shodan-style port set (~3800 ports), not a tiny top-N list.
 COMMON_PORTS = SHODAN_PORTS
+# Plaintext HTTP. 9200 is Elasticsearch's HTTP API, not a binary port.
+HTTP_PROBE_PORTS = {
+	80, 81, 3000, 5000, 7001, 8000, 8008, 8080, 8081, 8888, 9000, 9080, 9200,
+}
+TLS_PORTS = {443, 8443, 9443, 10443, 11443, 12443, 60443}
+_SSL = ssl.create_default_context()
+_SSL.check_hostname = False
+_SSL.verify_mode = ssl.CERT_NONE
+
+
+def _dial_targets(host: str) -> list[tuple[str, str]]:
+	"""Resolve once. Each item is (address to connect, name for Host and SNI)."""
+	if is_ip(host):
+		return [(host, host)]
+	try:
+		infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+	except socket.gaierror:
+		return [(host, host)]
+	ips: list[str] = []
+	for info in infos:
+		ip = info[4][0]
+		if ip not in ips:
+			ips.append(ip)
+	if not ips:
+		return [(host, host)]
+	return [(ip, host) for ip in ips]
 
 
 def _http_probe(host: str) -> bytes:
@@ -68,30 +95,22 @@ def _tls_label(writer: asyncio.StreamWriter) -> str:
 	return (version + " " + name).strip()
 
 
-async def _open(host: str, port: int, timeout: float):
-	"""TLS ports handshake first. A failed handshake falls back to plaintext."""
+async def _open(dial: str, name: str, port: int, timeout: float):
+	"""Connect to the resolved address. TLS uses the hostname for SNI."""
 	if port in TLS_PORTS:
 		try:
 			return await asyncio.wait_for(
 				asyncio.open_connection(
-					host,
+					dial,
 					port,
 					ssl=_SSL,
-					server_hostname=host,
+					server_hostname=name,
 				),
 				timeout=timeout,
 			)
 		except (ssl.SSLError, asyncio.TimeoutError, OSError, ConnectionError):
 			pass
-	return await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
-# Plaintext HTTP. 9200 is Elasticsearch's HTTP API, not a binary port.
-HTTP_PROBE_PORTS = {
-	80, 81, 3000, 5000, 7001, 8000, 8008, 8080, 8081, 8888, 9000, 9080, 9200,
-}
-TLS_PORTS = {443, 8443, 9443, 10443, 11443, 12443, 60443}
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
+	return await asyncio.wait_for(asyncio.open_connection(dial, port), timeout=timeout)
 
 
 async def scan_ports(
@@ -104,13 +123,14 @@ async def scan_ports(
 	on_probe: OnProbe | None = None,
 	on_hit: OnItem | None = None,
 ) -> list[PortHit]:
+	targets = await asyncio.to_thread(_dial_targets, host)
 	sem = asyncio.Semaphore(concurrency)
 	hits: list[PortHit] = []
 	done = 0
 	lock = asyncio.Lock()
-	total = len(ports)
+	total = len(ports) * len(targets)
 
-	async def one(port: int) -> None:
+	async def one(dial: str, name: str, port: int) -> None:
 		nonlocal done
 		service = PORT_SERVICES.get(port, "")
 		raw = ""
@@ -118,12 +138,12 @@ async def scan_ports(
 		try:
 			async with sem:
 				await call_maybe(on_probe, port)
-				reader, writer = await _open(host, port, timeout)
+				reader, writer = await _open(dial, name, port, timeout)
 			try:
 				if port in TLS_PORTS:
 					service = service or "https"
 				if port in HTTP_PROBE_PORTS or port in TLS_PORTS:
-					writer.write(_http_probe(host))
+					writer.write(_http_probe(name))
 				else:
 					writer.write(b"\r\n")
 				await writer.drain()
@@ -164,5 +184,5 @@ async def scan_ports(
 			await call_maybe(on_progress, done, total)
 
 	await call_maybe(on_progress, 0, total)
-	await asyncio.gather(*(one(port) for port in ports))
+	await asyncio.gather(*(one(dial, name, port) for dial, name in targets for port in ports))
 	return sorted(hits, key=lambda item: item.port)

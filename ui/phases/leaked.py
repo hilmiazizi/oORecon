@@ -1,5 +1,7 @@
 """Leaked login URL phase."""
 
+import asyncio
+
 from textual.widgets import DataTable, Static
 
 from models import LeakedUrlHit
