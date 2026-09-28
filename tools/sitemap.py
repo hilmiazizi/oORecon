@@ -48,6 +48,29 @@ def load_sitemap_wordlist(path: Path | None = None) -> tuple[str, ...]:
 	return tuple(paths) if paths else FALLBACK_PATHS
 
 
+def _is_html(body: str) -> bool:
+	head = body.lstrip()[:200].lower()
+	return head.startswith("<!doctype html") or head.startswith("<html")
+
+
+def _is_sitemap_body(body: str) -> bool:
+	"""True for a urlset or sitemap index, not a soft-200 HTML page."""
+	if not body or _is_html(body):
+		return False
+	sample = body[:8000].lower()
+	return "<urlset" in sample or "<sitemapindex" in sample
+
+
+def _is_robots_body(body: str) -> bool:
+	if not body or _is_html(body):
+		return False
+	for line in body.splitlines()[:40]:
+		item = line.strip().lower()
+		if item.startswith(("user-agent:", "disallow:", "allow:", "sitemap:")):
+			return True
+	return False
+
+
 def _is_xml_sitemap(url: str) -> bool:
 	"""Only .xml / .xml.gz sitemap endpoints — never page URLs."""
 	path = urlparse(url).path.lower().rstrip("/")
@@ -114,7 +137,7 @@ async def find_sitemaps(
 		seeds: list[str] = []
 		await call_maybe(on_progress, "robots.txt")
 		status, body = await fetch(base + "/robots.txt")
-		if status == 200 and body:
+		if status == 200 and _is_robots_body(body):
 			hit = SitemapHit("robots", base + "/robots.txt", "200")
 			hits.append(hit)
 			await call_maybe(on_hit, hit)
@@ -151,7 +174,7 @@ async def find_sitemaps(
 			await call_maybe(on_progress, "checking " + url)
 			async with sem:
 				status, body = await fetch(url)
-			if status != 200 or not body:
+			if status != 200 or not _is_sitemap_body(body):
 				return []
 			await emit(url, "200")
 
