@@ -14,6 +14,7 @@ import asyncio
 from pathlib import Path
 
 from rich.text import Text
+from ui.format import linkify
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -325,8 +326,7 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 	def _log(self, message: str, style: str = "dim") -> None:
 		if not self.is_running:
 			return
-		text = Text(message, style=style) if style else Text(message)
-		self.query_one("#log", RichLog).write(text)
+		self.query_one("#log", RichLog).write(linkify(message, style))
 
 	def _log_throttled(self, message: str, style: str = "dim") -> None:
 		now = asyncio.get_running_loop().time()

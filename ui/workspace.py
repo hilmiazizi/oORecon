@@ -10,6 +10,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, RichLog, Static, TabbedContent, TabPane
 from textual.worker import Worker, WorkerState
 
+from ui.format import link_text, linkify
 from tools import brute_dirs, find_sitemaps, mine_js
 from models import DirHit, HostCache, HostWorkspaceData, JsHit, PortHit, SitemapHit
 
@@ -83,7 +84,7 @@ class PortDetail(ModalScreen[None]):
 		body.append("─" * 48 + "\n", style="dim")
 		raw = hit.raw_banner.strip("\0") if hit.raw_banner else ""
 		if raw.strip():
-			body.append(raw.replace("\r\n", "\n").replace("\r", "\n"))
+			body.append(linkify(raw.replace("\r\n", "\n").replace("\r", "\n")))
 		else:
 			body.append("(empty)", style="dim")
 
@@ -155,16 +156,16 @@ class SecretDetail(ModalScreen[None]):
 		body.append("Kind".ljust(10), style="bold")
 		body.append(hit.kind + "\n", style="bold cyan")
 		body.append("Source".ljust(10), style="bold")
-		body.append((hit.source or "-") + "\n")
+		body.append(linkify((hit.source or "-") + "\n"))
 		body.append("\n")
 		body.append("Match\n", style="bold")
 		body.append("─" * 56 + "\n", style="dim")
-		body.append((hit.value or "(empty)") + "\n")
+		body.append(linkify((hit.value or "(empty)") + "\n"))
 		body.append("\n")
 		body.append("Context (± neighbors)\n", style="bold")
 		body.append("─" * 56 + "\n", style="dim")
 		if hit.context:
-			body.append(hit.context)
+			body.append(linkify(hit.context))
 		else:
 			body.append("(no surrounding context)", style="dim")
 
@@ -403,14 +404,14 @@ class DomainWorkspace(Screen):
 		sitemap = self.query_one("#table-sitemap", DataTable)
 		sitemap.clear()
 		for hit in self._sitemap_hits:
-			sitemap.add_row(hit.kind, hit.detail or "-", hit.url)
+			sitemap.add_row(hit.kind, hit.detail or "-", link_text(hit.url), height=None)
 
 		self._rebuild_dir_table()
 
 		jsminer = self.query_one("#table-jsminer", DataTable)
 		jsminer.clear()
 		for hit in self._js_hits:
-			jsminer.add_row(hit.kind, hit.value)
+			jsminer.add_row(hit.kind, link_text(hit.value), height=None)
 
 		self._log("restored from memory cache", "cyan")
 		self.query_one("#ws-status", Static).update("cached")
@@ -480,8 +481,7 @@ class DomainWorkspace(Screen):
 	def _log(self, message: str, style: str = "dim") -> None:
 		if not self.is_running:
 			return
-		text = Text(message, style=style) if style else Text(message)
-		self.query_one("#ws-log", RichLog).write(text)
+		self.query_one("#ws-log", RichLog).write(linkify(message, style))
 
 	def _log_throttled(self, message: str, style: str = "dim") -> None:
 		now = asyncio.get_running_loop().time()
@@ -575,7 +575,7 @@ class DomainWorkspace(Screen):
 
 		def on_hit(hit: SitemapHit) -> None:
 			self._sitemap_hits.append(hit)
-			table.add_row(hit.kind, hit.detail or "-", hit.url)
+			table.add_row(hit.kind, hit.detail or "-", link_text(hit.url), height=None)
 			self._log("sitemap · " + hit.kind + " · " + hit.url, "cyan")
 
 		try:
@@ -618,7 +618,12 @@ class DomainWorkspace(Screen):
 			style = "yellow"
 		elif str(hit.status).startswith("5"):
 			style = "bold magenta"
-		table.add_row(Text(str(hit.status), style=style), str(hit.length), hit.url)
+		table.add_row(
+			Text(str(hit.status), style=style),
+			str(hit.length),
+			link_text(hit.url),
+			height=None,
+		)
 
 	def _rebuild_dir_table(self) -> None:
 		table = self.query_one("#table-directories", DataTable)
@@ -684,7 +689,7 @@ class DomainWorkspace(Screen):
 
 		def on_hit(hit: JsHit) -> None:
 			self._js_hits.append(hit)
-			table.add_row(hit.kind, hit.value)
+			table.add_row(hit.kind, link_text(hit.value), height=None)
 			self._log("js · " + hit.kind + " · " + hit.value)
 
 		try:

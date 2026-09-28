@@ -5,6 +5,7 @@ import asyncio
 from textual.widgets import DataTable, Static
 
 from models import LeakedUrlHit
+from ui.format import link_text
 from tools.leakedurls import LeakedUrlError, leaked_login_urls
 
 
@@ -32,7 +33,7 @@ class LeakedPhase:
 			if not self.is_running:
 				return
 			self._leaked_hits.append(hit)
-			table.add_row(hit.kind, str(hit.occurrence), hit.url)
+			table.add_row(hit.kind, str(hit.occurrence), link_text(hit.url), height=None)
 			self._log_throttled("leaked · " + hit.kind + " · " + hit.url)
 
 		try:
@@ -59,7 +60,7 @@ class LeakedPhase:
 			table.clear()
 			self._leaked_hits = list(hits)
 			for hit in hits:
-				table.add_row(hit.kind, str(hit.occurrence), hit.url)
+				table.add_row(hit.kind, str(hit.occurrence), link_text(hit.url), height=None)
 			self._leak_status = "leaked " + str(len(hits))
 			self._refresh_status()
 			self.query_one("#stats-leaked", Static).update(

@@ -6,7 +6,7 @@ from textual.widgets import Button, DataTable, ProgressBar, Static, TabbedConten
 
 from models import HostResult
 from tools.certsub import CertSubError, certsub
-from ui.format import cloudflare_text, status_text
+from ui.format import cloudflare_text, link_text, status_text
 
 HOST_LOG_INTERVAL = 0.08
 HOST_UI_INTERVAL = 0.2
@@ -228,7 +228,7 @@ class HostsPhase:
 			if not self.is_running:
 				return
 			self._leaked_hits.append(hit)
-			table.add_row(hit.kind, str(hit.occurrence), hit.url)
+			table.add_row(hit.kind, str(hit.occurrence), link_text(hit.url), height=None)
 			self._log_throttled("leaked · " + hit.kind + " · " + hit.url)
 
 		try:
@@ -255,7 +255,7 @@ class HostsPhase:
 			table.clear()
 			self._leaked_hits = list(hits)
 			for hit in hits:
-				table.add_row(hit.kind, str(hit.occurrence), hit.url)
+				table.add_row(hit.kind, str(hit.occurrence), link_text(hit.url), height=None)
 			self._leak_status = "leaked " + str(len(hits))
 			self._refresh_status()
 			self.query_one("#stats-leaked", Static).update(
