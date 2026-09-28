@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,6 +31,8 @@ OnProgress = Callable[[str], Awaitable[None] | None]
 OnItem = Callable[[object], Awaitable[None] | None]
 
 DEFAULT_CONCURRENCY = 50
+# Soft-404s (Instagram's HTML shell) share this prefix; nonces and the path come later.
+_WILDCARD_BYTES = 256
 
 
 def load_wordlist(path: Path | None = None) -> tuple[str, ...]:
@@ -53,18 +56,19 @@ def load_wordlist(path: Path | None = None) -> tuple[str, ...]:
 DEFAULT_PATHS = load_wordlist()
 
 
-def _probe_sync(url: str, timeout: float) -> tuple[int | None, int]:
+def _probe_sync(url: str, timeout: float) -> tuple[int | None, int, bytes]:
 	"""Blocking GET — runs in a worker thread (no AsyncSession on the UI loop)."""
 	try:
 		response = cffi_get(url, headers=HEADERS, allow_redirects=False, timeout=timeout)
+		body = response.content or b""
 		cl = response.headers.get("Content-Length") or response.headers.get("content-length")
 		if cl is not None and str(cl).isdigit():
 			length = int(cl)
 		else:
-			length = len(response.content or b"")
-		return response.status_code, length
+			length = len(body)
+		return response.status_code, length, body[:_WILDCARD_BYTES]
 	except Exception:
-		return None, 0
+		return None, 0, b""
 
 
 async def brute_dirs(
@@ -90,6 +94,9 @@ async def brute_dirs(
 
 	await call_maybe(on_progress, "0/" + str(total) + " · " + str(total) + " paths")
 
+	# One missing path. Anything that comes back identical is the site-wide soft 404.
+	wildcard: tuple[int, bytes] | None = None
+
 	queue: asyncio.Queue[str | None] = asyncio.Queue()
 	for path in word_paths:
 		queue.put_nowait(path)
@@ -97,6 +104,14 @@ async def brute_dirs(
 		queue.put_nowait(None)
 
 	with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dirbrute") as pool:
+		baseline = base + "/oorecon-" + uuid.uuid4().hex
+		base_status, _, base_prefix = await loop.run_in_executor(
+			pool, _probe_sync, baseline, timeout
+		)
+		if base_status is not None and base_prefix:
+			wildcard = (base_status, base_prefix)
+			await call_maybe(on_progress, "wildcard · HTTP " + str(base_status))
+
 		async def worker() -> None:
 			nonlocal done
 			while True:
@@ -104,8 +119,18 @@ async def brute_dirs(
 				if path is None:
 					return
 				url = base + "/" + path.lstrip("/")
-				status, length = await loop.run_in_executor(pool, _probe_sync, url, timeout)
-				if status is not None and (status < 400 or status in (401, 403)) and length > 0:
+				status, length, prefix = await loop.run_in_executor(pool, _probe_sync, url, timeout)
+				same_shell = (
+					wildcard is not None
+					and status == wildcard[0]
+					and prefix == wildcard[1]
+				)
+				if (
+					status is not None
+					and (status < 400 or status in (401, 403))
+					and length > 0
+					and not same_shell
+				):
 					hit = DirHit(path, status, length, url)
 					async with lock:
 						hits.append(hit)
