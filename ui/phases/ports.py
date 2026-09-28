@@ -51,17 +51,20 @@ class PortsPhase:
 		def on_hit(hit: PortHit) -> None:
 			if not self.is_running:
 				return
-			key = str(hit.port)
-			self._port_hits[key] = hit
+			self._port_hits[hit.key] = hit
 			banner = hit.banner[:120] if hit.banner else Text("open", style="bold green")
 			table.add_row(
 				Text(str(hit.port), style="bold cyan"),
+				hit.ip or "-",
 				hit.service or "-",
 				banner,
-				key=key,
+				key=hit.key,
 			)
 			detail = hit.service or hit.banner[:60] or "open"
-			self._log("open port " + str(hit.port) + " · " + detail, "bold green")
+			self._log(
+				"open port " + str(hit.port) + " · " + (hit.ip or hit.host) + " · " + detail,
+				"bold green",
+			)
 
 		try:
 			hits = await scan_ports(

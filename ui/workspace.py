@@ -70,6 +70,7 @@ class PortDetail(ModalScreen[None]):
 		body = Text()
 		rows = (
 			("Host", hit.host),
+			("IP", hit.ip or "-"),
 			("Port", str(hit.port)),
 			("State", hit.state),
 			("Service", hit.service or "-"),
@@ -90,7 +91,7 @@ class PortDetail(ModalScreen[None]):
 
 		with Vertical(id="port-dialog"):
 			yield Static("PORT", id="port-title")
-			yield Static(hit.host + ":" + str(hit.port), id="port-subtitle")
+			yield Static((hit.ip or hit.host) + ":" + str(hit.port), id="port-subtitle")
 			yield Static("─" * 48, id="port-rule")
 			with ScrollableContainer(id="port-body"):
 				yield Static(body)

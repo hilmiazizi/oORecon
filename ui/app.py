@@ -150,6 +150,7 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 
 		ports = self.query_one("#table-ports", DataTable)
 		ports.add_column("Port", width=8)
+		ports.add_column("IP", width=18)
 		ports.add_column("Service", width=12)
 		ports.add_column("Banner")
 		ports.cursor_type = "row"
@@ -286,15 +287,15 @@ class ReconApp(App, DnsPhase, ReversePhase, LeakedPhase, PortsPhase, HostsPhase)
 		hit: PortHit | None = None
 		if event is not None and event.row_key:
 			hit = self._port_hits.get(str(event.row_key.value))
-		if hit is None:
+		if hit is None and table.row_count:
 			row = event.cursor_row if event is not None else table.cursor_row
-			if row is None or row < 0 or table.row_count == 0:
+			if row is None or row < 0:
 				return
 			try:
-				port = int(str(table.get_row_at(row)[0]))
+				row_key = table.coordinate_to_cell_key((row, 0)).row_key
+				hit = self._port_hits.get(str(row_key.value))
 			except Exception:
 				return
-			hit = self._port_hits.get(str(port))
 		if hit is not None:
 			self.push_screen(PortDetail(hit))
 

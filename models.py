@@ -21,6 +21,12 @@ class PortHit:
 	raw_banner: str = ""
 	service: str = ""
 	state: str = "open"
+	ip: str = ""
+
+	@property
+	def key(self) -> str:
+		"""One row per address and port. 1.1.1.2:443 and 1.1.1.3:443 both stay."""
+		return (self.ip or self.host) + ":" + str(self.port)
 
 	@property
 	def summary(self) -> str:

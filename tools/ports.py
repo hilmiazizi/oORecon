@@ -173,7 +173,7 @@ async def scan_ports(
 					service = "ftp"
 				elif "smtp" in lower:
 					service = "smtp"
-			hit = PortHit(host, port, banner, raw, service, "open")
+			hit = PortHit(name, port, banner, raw, service, "open", dial)
 			async with lock:
 				hits.append(hit)
 				await call_maybe(on_hit, hit)
